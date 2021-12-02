@@ -49,6 +49,7 @@ struct onic_priv {
 	DECLARE_BITMAP(flags, 32);
 	int func_id;
 	int RS_FEC;
+	int poll_mode;
 
 	struct kmem_cache *dma_req;
 	struct qdma_dev_conf qdma_dev_conf;

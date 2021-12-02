@@ -17,6 +17,9 @@ char onic_drv_ver[] = DRV_VER;
 static int RS_FEC_ENABLED = 0;
 module_param(RS_FEC_ENABLED, int, 0644);
 
+static int poll_mode = 0;
+module_param(poll_mode, int, 0644);
+
 /* PCI id for devices */
 static const struct pci_device_id onic_pci_ids[] = {
 	{ PCI_DEVICE(0x10ee, 0x903f) },
@@ -217,7 +220,7 @@ static int onic_rx_poll(struct napi_struct *napi, int quota)
 	ret = qdma_queue_service(xpriv->dev_handle, q_handle, quota, true);
 	/* Indicate napi_complete irrespective of ret */
 	napi_complete(napi);
-	if (ret < 0) {
+	if (!xpriv->poll_mode && ret < 0) {
 		netdev_dbg(netdev, "%s: qdma_queue_service for queue=%d returned status=%d\n",
 			   __func__, queue_id, ret);
 		return ret;
@@ -229,7 +232,7 @@ static int onic_rx_poll(struct napi_struct *napi, int quota)
 
 	qdma_queue_update_pointers(xpriv->dev_handle, q_handle);
 
-	if (pkt_cnt >= quota)
+	if (xpriv->poll_mode || (pkt_cnt >= quota))
 		napi_reschedule(napi);
 
 	return 0;
@@ -273,7 +276,7 @@ static int onic_qdma_rx_queue_add(struct onic_priv *xpriv, u32 q_no,
 	qconf.cmpl_timer_idx = timer_idx;
 	qconf.cmpl_cnt_th_idx = cnt_th_idx;
 	qconf.cmpl_trig_mode = TRIG_MODE_COMBO;
-	qconf.cmpl_en_intr = 1;
+	qconf.cmpl_en_intr = (xpriv->poll_mode == 0);
 	qconf.quld = (unsigned long)xpriv;
 	qconf.fp_descq_isr_top = onic_isr_rx_tophalf;
 	qconf.fp_descq_c2h_packet = onic_rx_pkt_process;
@@ -316,7 +319,6 @@ static void onic_qdma_rx_queue_release(struct onic_priv *xpriv, int num_queues)
 				   "%s: qdma_queue remove() failed for queue %d with status %d(%s)\n",
 				   __func__, q_no, ret, error_str);
 		}
-		napi_disable(&xpriv->napi[q_no]);
 		netif_napi_del(&xpriv->napi[q_no]);
 	}
 
@@ -344,7 +346,6 @@ static int onic_qdma_rx_queue_setup(struct onic_priv *xpriv)
 		}
 		netif_napi_add(xpriv->netdev, &xpriv->napi[q_no], onic_rx_poll,
 			       ONIC_NAPI_WEIGHT);
-		napi_enable(&xpriv->napi[q_no]);
 	}
 
 	return 0;
@@ -405,7 +406,7 @@ static int onic_qdma_tx_queue_setup(struct onic_priv *xpriv)
 		memset(&qconf, 0, sizeof(struct qdma_queue_conf));
 		qconf.st = 1;
 		qconf.q_type = Q_H2C;
-		qconf.irq_en = 1;
+		qconf.irq_en = (xpriv->poll_mode == 0);
 		qconf.wb_status_en = 1;
 		qconf.cmpl_stat_en = 1;
 		qconf.cmpl_status_acc_en = 1;
@@ -512,7 +513,7 @@ static int onic_qdma_start(struct onic_priv *xpriv)
  */
 int onic_open(struct net_device *netdev)
 {
-	int ret = 0;
+	int ret = 0, q_no = 0;
 	struct onic_priv * xpriv;
 
 	if (!netdev) {
@@ -556,6 +557,13 @@ int onic_open(struct net_device *netdev)
 		goto release_queues;
 	}
 
+	for (q_no = 0; q_no < xpriv->netdev->real_num_rx_queues; q_no++)
+		napi_enable(&xpriv->napi[q_no]);
+
+	if (xpriv->poll_mode)
+		for (q_no = 0; q_no < xpriv->netdev->real_num_rx_queues; q_no++)
+			napi_schedule(&xpriv->napi[q_no]);
+
 	netif_tx_start_all_queues(netdev);
 	netif_carrier_on(netdev);
 
@@ -575,7 +583,7 @@ release_rx_queues:
  */
 static int onic_stop(struct net_device *netdev)
 {
-	int ret = 0;
+	int ret = 0, q_no = 0;
 	struct onic_priv *xpriv;
 
 	if (!netdev) {
@@ -591,6 +599,9 @@ static int onic_stop(struct net_device *netdev)
 
 	netif_tx_stop_all_queues(netdev);
 	netif_carrier_off(netdev);
+
+	for (q_no = 0; q_no < xpriv->netdev->real_num_rx_queues; q_no++)
+		napi_disable(&xpriv->napi[q_no]);
 
 	ret = onic_qdma_stop(xpriv, netdev->real_num_tx_queues,
 			     netdev->real_num_rx_queues);
@@ -1022,11 +1033,16 @@ static int onic_qdma_setup(struct onic_priv *xpriv)
 	xpriv->qdma_dev_conf.data_msix_qvec_max = xpriv->nb_queues;
 	xpriv->qdma_dev_conf.user_msix_qvec_max = ONIC_MAX_USER_MSIX;
 	xpriv->qdma_dev_conf.master_pf = master_pf;
-	xpriv->qdma_dev_conf.intr_moderation = ONIC_INTERRUPT_MODERATION_EN;
+	if (!xpriv->poll_mode)
+		xpriv->qdma_dev_conf.intr_moderation =
+			ONIC_INTERRUPT_MODERATION_EN;
 	xpriv->qdma_dev_conf.qsets_max = ONIC_MAX_QUEUES;
 	xpriv->qdma_dev_conf.qsets_base = func_id * ONIC_MAX_QUEUES;
 	xpriv->qdma_dev_conf.pdev = xpriv->pcidev;
-	xpriv->qdma_dev_conf.qdma_drv_mode = DIRECT_INTR_MODE;
+	if (xpriv->poll_mode)
+		xpriv->qdma_dev_conf.qdma_drv_mode = POLL_MODE;
+	else
+		xpriv->qdma_dev_conf.qdma_drv_mode = DIRECT_INTR_MODE;
 
 	ret = qdma_device_open(onic_drv_name, &xpriv->qdma_dev_conf, &xpriv->dev_handle);
 	if (ret != 0) {
@@ -1194,6 +1210,7 @@ static int onic_pci_probe(struct pci_dev *pdev,
 	xpriv->pcidev = pdev;
 	xpriv->func_id = PCI_FUNC(pdev->devfn);
 	xpriv->RS_FEC = RS_FEC_ENABLED;
+	xpriv->poll_mode = poll_mode;
 
 	if (xpriv->func_id == 0) {
 		dev_info(&pdev->dev, "device is master PF");
