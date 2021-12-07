@@ -25,6 +25,11 @@ Each `pf` has it's own json file under `json` directory.
 * `port_id` is used for cmac id and pf id.
 * Each `pf` must have a unique `mac_addr`.
 
+For installation,
+```sh
+$ sudo make json_install
+```
+
 ## Test Setup
 
 The following test setup is valid for a machine which has an alveo card with two QSF28 ports.
