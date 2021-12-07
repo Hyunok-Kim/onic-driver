@@ -1,0 +1,18 @@
+{
+	"qdma_bar": 0,
+	"user_bar": 2,
+	"queue_base": 64,
+	"queue_max": 64,
+	"used_queues": 0,
+	"pci_msix_user_cnt": 1,
+	"pci_master_pf": false,
+	"poll_mode": false,
+	"intr_mod_en": true,
+	"ring_sz": 1024,
+	"c2h_tmr_cnt": 5,
+	"c2h_cnt_thr": 64,
+	"c2h_buf_sz": 4096,
+	"rsfec_en": false,
+	"port_id": 1,
+	"mac_addr": [0x00, 0x0A, 0x35, 0x00, 0x91, 0x3F]
+}

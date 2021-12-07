@@ -3,22 +3,13 @@
 
 #include <linux/netdevice.h>
 #include <linux/cpumask.h>
+#include "onic_json.h"
 #include "libqdma_export.h"
 #include "onic_register.h"
 #include "qdma_access/qdma_access_common.h"
 #include "qdma_descq.h"
 
-#define ONIC_MAX_USER_MSIX                  (1)
-#define ONIC_MAX_QUEUES                     (64)
-#define ONIC_FLAG_MASTER_PF                 (0)
-#define ONIC_INTERRUPT_MODERATION_EN        (1)
-#define ONIC_USER_BAR                       (2)
 #define ONIC_ERROR_STR_BUF_LEN              (512)
-
-#define ONIC_DEFAULT_RING_SIZE              (1024)
-#define ONIC_DEFAULT_C2H_TIMER_COUNT        (5)
-#define ONIC_DEFAULT_C2H_COUNT_THRESHOLD    (64)
-#define ONIC_DEFAULT_C2H_BUFFER_SIZE        (4096)
 
 #define ONIC_RX_COPY_THRES                  (256)
 #define ONIC_RX_PULL_LEN                    (128)
@@ -43,13 +34,10 @@ struct onic_priv {
 
 	struct net_device *netdev;
 	struct pci_dev *pcidev;
+	struct onic_platform_info *pinfo;
 
 	u16 num_msix;
 	u16 nb_queues;
-	DECLARE_BITMAP(flags, 32);
-	int func_id;
-	int RS_FEC;
-	int poll_mode;
 
 	struct kmem_cache *dma_req;
 	struct qdma_dev_conf qdma_dev_conf;
